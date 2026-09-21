@@ -18,7 +18,11 @@ Protocol Bridge
     ↓
 Decision Engine
     ↓
+Mission Status
+    ↓
 Live Visualization
+    ↓
+Mission Summary
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from agent.mission.protocol_loader import ProtocolLoader
 from agent.mission.decision_engine import DecisionEngine
 from agent.mission.deviation_detector import DeviationDetector
 from agent.mission.live_perception_session import LivePerceptionSession
+from agent.mission.mission_status import MissionStatus
 from agent.mission.perception_decision import PerceptionDecisionAdapter
 from agent.mission.perception_bridge import PerceptionProtocolBridge
 from agent.mission.sequence_validator import SequenceValidator
@@ -116,8 +121,7 @@ def build_mission_session() -> LivePerceptionSession:
     )
 
     # ---------------------------------------------------------
-    # Phase 7.5.3 Step 4:
-    # Connect real protocol objects to perception bridge.
+    # Connect protocol objects to perception bridge
     # ---------------------------------------------------------
 
     bridge = PerceptionProtocolBridge(
@@ -129,10 +133,10 @@ def build_mission_session() -> LivePerceptionSession:
     # ---------------------------------------------------------
 
     adapter = PerceptionDecisionAdapter(
-    decision_engine,
-    bridge=bridge,
-    protocol_aware=True,
-)
+        decision_engine,
+        bridge=bridge,
+        protocol_aware=True,
+    )
 
     # ---------------------------------------------------------
     # Live perception session
@@ -152,9 +156,21 @@ def main() -> None:
     print("=" * 60)
     print()
 
+    # ---------------------------------------------------------
+    # Initialize mission system
+    # ---------------------------------------------------------
+
     print("Initializing mission system...")
 
     session = build_mission_session()
+
+    # Phase 11:
+    # MissionStatus provides mission monitoring information.
+    mission_status = MissionStatus(session)
+
+    # ---------------------------------------------------------
+    # Initialize YOLO
+    # ---------------------------------------------------------
 
     print("Loading YOLO...")
 
@@ -163,9 +179,17 @@ def main() -> None:
         confidence_threshold=0.40,
     )
 
+    # ---------------------------------------------------------
+    # Initialize MediaPipe
+    # ---------------------------------------------------------
+
     print("Loading MediaPipe hand tracker...")
 
     hand_tracker = HandTracker()
+
+    # ---------------------------------------------------------
+    # Live perception processor
+    # ---------------------------------------------------------
 
     processor = LivePerceptionProcessor(
         object_detector,
@@ -173,7 +197,15 @@ def main() -> None:
         session,
     )
 
+    # ---------------------------------------------------------
+    # Live overlay
+    # ---------------------------------------------------------
+
     overlay = LiveOverlay()
+
+    # ---------------------------------------------------------
+    # Webcam runtime
+    # ---------------------------------------------------------
 
     runtime = WebcamRuntime(
         processor,
@@ -208,6 +240,15 @@ def main() -> None:
             decision = result["result"]
 
             # -------------------------------------------------
+            # Phase 11:
+            # Get current mission status and progress
+            # -------------------------------------------------
+
+            status_data = mission_status.get_current_status()
+
+            progress = status_data["progress"]
+
+            # -------------------------------------------------
             # 1. Draw YOLO object detections
             # -------------------------------------------------
 
@@ -226,12 +267,13 @@ def main() -> None:
             )
 
             # -------------------------------------------------
-            # 3. Draw ASTRA-GUARD decision information
+            # 3. Draw ASTRA-GUARD decision + mission status
             # -------------------------------------------------
 
             display_frame = overlay.draw(
                 display_frame,
                 decision,
+                mission_status=status_data,
             )
 
             # -------------------------------------------------
@@ -244,25 +286,23 @@ def main() -> None:
             )
 
             # -------------------------------------------------
-            # Terminal debug information
+            # 5. Terminal mission status
             # -------------------------------------------------
 
             print(
                 f"\r"
-                f"Activity: "
-                f"{decision.get('perception', {}).get('activity', 'UNKNOWN')} | "
-                f"Object: "
-                f"{decision.get('perception', {}).get('object', 'NONE')} | "
-                f"Status: "
-                f"{decision.get('status', 'UNKNOWN')} | "
-                f"Step: "
-                f"{decision.get('step_id', 'UNKNOWN')}",
+                f"Step: {status_data.get('step_id', 'UNKNOWN')} | "
+                f"Status: {status_data.get('status', 'UNKNOWN')} | "
+                f"Activity: {status_data.get('activity', 'UNKNOWN')} | "
+                f"Object: {status_data.get('detected_object', 'NONE')} | "
+                f"Progress: "
+                f"{progress.get('progress_percent', 0)}%",
                 end="",
                 flush=True,
             )
 
             # -------------------------------------------------
-            # Check keyboard input
+            # 6. Check keyboard input
             # -------------------------------------------------
 
             key = cv2.waitKey(1) & 0xFF
@@ -276,13 +316,69 @@ def main() -> None:
         print("Stopping ASTRA-GUARD...")
 
     finally:
+        # -----------------------------------------------------
+        # Release webcam and perception resources
+        # -----------------------------------------------------
+
         runtime.release()
         processor.close()
         cv2.destroyAllWindows()
 
+        # -----------------------------------------------------
+        # Phase 11 Step 6:
+        # Display mission summary
+        # -----------------------------------------------------
+
+        summary = mission_status.get_summary()
+        progress = mission_status.get_progress()
+
         print()
         print()
+        print("=" * 60)
+        print("              ASTRA-GUARD MISSION SUMMARY")
+        print("=" * 60)
+        print()
+
+        print(
+            f"Total Events: {summary['total_events']}"
+        )
+
+        print(
+            f"Correct:      {summary['correct']}"
+        )
+
+        print(
+            f"Deviations:   {summary['deviations']}"
+        )
+
+        print(
+            f"Uncertain:    {summary['uncertain']}"
+        )
+
+        print(
+            f"Completed:    {summary['completed']}"
+        )
+
+        print()
+
+        print(
+            f"Progress:     "
+            f"{progress['completed_steps']}/"
+            f"{progress['total_steps']} steps "
+            f"({progress['progress_percent']:.1f}%)"
+        )
+
+        print()
+
+        if progress["completed"]:
+            print("Mission Status: COMPLETED")
+        else:
+            print("Mission Status: INCOMPLETE")
+
+        print()
+        print("=" * 60)
         print("ASTRA-GUARD stopped.")
+        print("=" * 60)
 
 
 if __name__ == "__main__":

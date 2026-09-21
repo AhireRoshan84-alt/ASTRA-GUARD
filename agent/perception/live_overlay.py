@@ -1,8 +1,9 @@
 """
-Phase 8.1 - Demo-ready live decision overlay.
+Phase 11 - Mission-aware live decision overlay.
 
 Displays ASTRA-GUARD perception, protocol expectations,
-decision status, and guidance on the webcam frame.
+decision status, guidance, and mission progress on
+the webcam frame.
 
 This module only visualizes existing results.
 It does not perform detection or make decisions.
@@ -52,12 +53,42 @@ class LiveOverlay:
             min(1.0, confidence),
         )
 
+    @staticmethod
+    def _safe_progress(
+        progress: Any,
+    ) -> float:
+        """Convert mission progress to a value between 0 and 100."""
+
+        try:
+            value = float(progress)
+        except (TypeError, ValueError):
+            return 0.0
+
+        return max(
+            0.0,
+            min(100.0, value),
+        )
+
     def draw(
         self,
         frame: np.ndarray,
         result: Dict[str, Any],
+        mission_status: Dict[str, Any] | None = None,
     ) -> np.ndarray:
-        """Draw protocol decision information on a frame."""
+        """
+        Draw protocol decision and mission status information.
+
+        Parameters
+        ----------
+        frame:
+            OpenCV BGR video frame.
+
+        result:
+            Current protocol decision result.
+
+        mission_status:
+            Dashboard-ready mission status returned by MissionStatus.
+        """
 
         if frame is None:
             raise ValueError(
@@ -78,7 +109,19 @@ class LiveOverlay:
                 "result must be a dictionary"
             )
 
+        if mission_status is not None and not isinstance(
+            mission_status,
+            dict,
+        ):
+            raise TypeError(
+                "mission_status must be a dictionary or None"
+            )
+
         annotated = frame.copy()
+
+        # ---------------------------------------------------------
+        # Perception
+        # ---------------------------------------------------------
 
         perception = result.get(
             "perception",
@@ -91,9 +134,6 @@ class LiveOverlay:
         ):
             perception = {}
 
-        # ---------------------------------------------------------
-        # Perception
-        # ---------------------------------------------------------
         activity = self._safe_text(
             perception.get("activity"),
         )
@@ -109,6 +149,7 @@ class LiveOverlay:
         # ---------------------------------------------------------
         # Protocol decision
         # ---------------------------------------------------------
+
         decision_status = self._safe_text(
             result.get("status"),
         )
@@ -138,8 +179,51 @@ class LiveOverlay:
         )
 
         # ---------------------------------------------------------
+        # Mission status
+        # ---------------------------------------------------------
+
+        if mission_status is None:
+            mission_status = {}
+
+        progress_data = mission_status.get(
+            "progress",
+            {},
+        )
+
+        if not isinstance(
+            progress_data,
+            dict,
+        ):
+            progress_data = {}
+
+        completed_steps = progress_data.get(
+            "completed_steps",
+            0,
+        )
+
+        total_steps = progress_data.get(
+            "total_steps",
+            0,
+        )
+
+        progress_percent = self._safe_progress(
+            progress_data.get(
+                "progress_percent",
+                0.0,
+            )
+        )
+
+        mission_completed = bool(
+            progress_data.get(
+                "completed",
+                False,
+            )
+        )
+
+        # ---------------------------------------------------------
         # Main information panel
         # ---------------------------------------------------------
+
         lines = [
             "ASTRA-GUARD",
             f"Step: {step_id}",
@@ -151,6 +235,16 @@ class LiveOverlay:
             f"Status: {decision_status}",
             f"Deviation: {deviation_type}",
             f"Guidance: {guidance}",
+            (
+                f"Mission Progress: "
+                f"{completed_steps}/{total_steps} "
+                f"({progress_percent:.1f}%)"
+            ),
+            (
+                "Mission: COMPLETED"
+                if mission_completed
+                else "Mission: ACTIVE"
+            ),
             "Press Q to quit",
         ]
 
@@ -161,6 +255,7 @@ class LiveOverlay:
         # ---------------------------------------------------------
         # Background panel
         # ---------------------------------------------------------
+
         panel_width = 700
         panel_height = 25 + (
             len(lines) * line_height
@@ -190,6 +285,7 @@ class LiveOverlay:
         # ---------------------------------------------------------
         # Text
         # ---------------------------------------------------------
+
         for index, line in enumerate(lines):
 
             cv2.putText(
